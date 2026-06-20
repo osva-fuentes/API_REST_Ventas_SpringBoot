@@ -1,92 +1,102 @@
-name: Build & Deploy API
+name: Build & Deploy API Ventas
 
 on:
   repository_dispatch:
     types:
       - backend-ventas
+  # Tambien puedes disparar con push si lo prefieres, dejando repository_dispatch como esta:
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - 'back-Ventas_SpringBoot/Springboot-API-REST/**'
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: ventas-api
+  EKS_CLUSTER_NAME: nota3-Cluster
 
 jobs:
-    build:
-        runs-on: ubuntu-latest
-        
-        steps:
-            - name: Checkout repo
-              uses: actions/checkout@v3
+  build-and-deploy:
+    runs-on: ubuntu-latest
 
-            - name: Set up Docker Buildx
-              uses: docker/setup-buildx-action@v3
-                  
-            - name: Set up QEMU
-              uses: docker/setup-qemu-action@v3
-            
-            - name: Create .env from GitHub secrets
-              run: |
-                echo "DB_ENDPOINT=${{ secrets.DB_ENDPOINT }}" >> .env
-                echo "DB_PORT=${{ secrets.DB_PORT }}" >> .env
-                echo "DB_NAME=${{ secrets.DB_NAME }}" >> .env
-                echo "DB_USERNAME=${{ secrets.DB_USERNAME }}" >> .env
-                echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
-           
-            - name: List files in the working directory
-              run: ls -alh
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-            - name: Login to Docker Hub manually
-              run: |
-                echo ${{ secrets.DOCKERHUB_TOKEN }} | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-            - name: Build and push Docker image
-              uses: docker/build-push-action@v6
-              with:
-                # Hacer push a docker hub de la imagen recien construida
-                push: true
-                tags: ${{ secrets.DOCKERHUB_USERNAME }}/ventas_api:latest
-                context: ./Springboot-API-REST
-                file: ./Springboot-API-REST/Dockerfile
-        
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
-            - name: Login to Docker Hub
-              uses: docker/login-action@v3
-              with:
-                username: ${{ secrets.DOCKERHUB_USERNAME }}
-                password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # --- Autenticacion con AWS ---
+      - name: Configurar credenciales de AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-            - name: Instalar Doppler CLI
-              uses: dopplerhq/cli-action@v3
-  
-            - name: Configurar Doppler CLI
-              env:
-                DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-              run: doppler setup --token $DOPPLER_TOKEN
-  
-  
-            - name: Obtener secretos desde Doppler
-              env:
-                DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-              run: |
-                echo "EC2_KEY=$(doppler secrets get EC2_KEY --plain)" >> $GITHUB_ENV
-                echo "SERVIDOR_VENTAS=$(doppler secrets get SERVIDOR_VENTAS --plain)" >> $GITHUB_ENV
+      - name: Login a Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
+      # --- Build y push de la imagen a ECR (reemplaza el login/push a DockerHub) ---
+      - name: Build y push de la imagen Docker a ECR
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+          context: ./Springboot-API-REST
+          file: ./Springboot-API-REST/Dockerfile
 
-            - name: Login SSH on EC2 to Deploy
-              uses: appleboy/ssh-action@v1
-              with:
-                host: ${{ env.SERVIDOR_VENTAS }}
-                username: ${{ secrets.EC2_USERNAME }}
-                key: ${{ secrets.SSH_KEY_CITT }}
-                port: ${{ secrets.EC2_SSH_PORT }}
-                script: |
-                  mkdir -p /home/ubuntu/ventas/
-                  cd /home/ubuntu/ventas/
-                  # Instalación de Docker y Docker Compose (si no están instalados)
-                  sudo apt update -y
-                  sudo apt install -y docker.io docker-compose
-                  # Hacer un pull de la imagen de docker hub
-                  sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/ventas_api:latest
-                  # Ejecutar el contenedor en segundo plano
-                  sudo docker run -d -p 8080:8080 \
-                    -e "DB_ENDPOINT=${{ secrets.DB_ENDPOINT }}" \
-                    -e "DB_PORT=${{ secrets.DB_PORT }}" \
-                    -e "DB_NAME=${{ secrets.DB_NAME }}" \
-                    -e "DB_USERNAME=${{ secrets.DB_USERNAME }}" \
-                    -e "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" \
-                    ${{ secrets.DOCKERHUB_USERNAME }}/ventas_api:latest
+      # --- Obtener secretos de Doppler, igual que antes ---
+      - name: Instalar Doppler CLI
+        uses: dopplerhq/cli-action@v3
+
+      - name: Configurar Doppler CLI
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: doppler setup --token $DOPPLER_TOKEN
+
+      - name: Obtener secretos desde Doppler
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          echo "DB_ENDPOINT=$(doppler secrets get DB_ENDPOINT --plain)" >> $GITHUB_ENV
+          echo "DB_PORT=$(doppler secrets get DB_PORT --plain)" >> $GITHUB_ENV
+          echo "DB_NAME=$(doppler secrets get DB_NAME --plain)" >> $GITHUB_ENV
+          echo "DB_USERNAME=$(doppler secrets get DB_USERNAME --plain)" >> $GITHUB_ENV
+          echo "DB_PASSWORD=$(doppler secrets get DB_PASSWORD --plain)" >> $GITHUB_ENV
+
+      # --- Configurar kubectl para hablar con el cluster EKS ---
+      - name: Instalar kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'latest'
+
+      - name: Actualizar kubeconfig para apuntar al cluster EKS
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
+      # --- Crear/actualizar el Secret de la BD en el cluster ---
+      - name: Crear o actualizar el Secret de credenciales de BD
+        run: |
+          kubectl create secret generic db-credentials \
+            --from-literal=DB_ENDPOINT="${{ env.DB_ENDPOINT }}" \
+            --from-literal=DB_PORT="${{ env.DB_PORT }}" \
+            --from-literal=DB_NAME="${{ env.DB_NAME }}" \
+            --from-literal=DB_USERNAME="${{ env.DB_USERNAME }}" \
+            --from-literal=DB_PASSWORD="${{ env.DB_PASSWORD }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      # --- Aplicar los manifiestos de Kubernetes ---
+      - name: Deploy a EKS
+        run: kubectl apply -f k8s/
+
+      # --- Forzar que el Deployment tome la nueva imagen (importante con el tag "latest") ---
+      - name: Reiniciar el Deployment para tomar la nueva imagen
+        run: kubectl rollout restart deployment/back-ventas
+
+      - name: Esperar a que el rollout termine
+        run: kubectl rollout status deployment/back-ventas --timeout=120s
