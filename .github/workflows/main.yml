@@ -4,6 +4,7 @@ on:
   repository_dispatch:
     types:
       - backend-ventas
+  workflow_dispatch:
   # Tambien puedes disparar con push si lo prefieres, dejando repository_dispatch como esta:
   # push:
   #   branches: [main]
