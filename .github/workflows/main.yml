@@ -5,11 +5,6 @@ on:
     types:
       - backend-ventas
   workflow_dispatch:
-  # Tambien puedes disparar con push si lo prefieres, dejando repository_dispatch como esta:
-  # push:
-  #   branches: [main]
-  #   paths:
-  #     - 'back-Ventas_SpringBoot/Springboot-API-REST/**'
 
 env:
   AWS_REGION: us-east-1
@@ -30,7 +25,6 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      # --- Autenticacion con AWS ---
       - name: Configurar credenciales de AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -43,7 +37,6 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # --- Build y push de la imagen a ECR (reemplaza el login/push a DockerHub) ---
       - name: Build y push de la imagen Docker a ECR
         uses: docker/build-push-action@v6
         with:
@@ -52,52 +45,29 @@ jobs:
           context: ./Springboot-API-REST
           file: ./Springboot-API-REST/Dockerfile
 
-      # --- Obtener secretos de Doppler, igual que antes ---
-      - name: Instalar Doppler CLI
-        uses: dopplerhq/cli-action@v3
-
-      - name: Configurar Doppler CLI
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-        run: doppler setup --token $DOPPLER_TOKEN
-
-      - name: Obtener secretos desde Doppler
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-        run: |
-          echo "DB_ENDPOINT=$(doppler secrets get DB_ENDPOINT --plain)" >> $GITHUB_ENV
-          echo "DB_PORT=$(doppler secrets get DB_PORT --plain)" >> $GITHUB_ENV
-          echo "DB_NAME=$(doppler secrets get DB_NAME --plain)" >> $GITHUB_ENV
-          echo "DB_USERNAME=$(doppler secrets get DB_USERNAME --plain)" >> $GITHUB_ENV
-          echo "DB_PASSWORD=$(doppler secrets get DB_PASSWORD --plain)" >> $GITHUB_ENV
-
-      # --- Configurar kubectl para hablar con el cluster EKS ---
       - name: Instalar kubectl
         uses: azure/setup-kubectl@v4
         with:
           version: 'latest'
 
-      - name: Actualizar kubeconfig para apuntar al cluster EKS
+      - name: Actualizar kubeconfig para EKS
         run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
 
-      # --- Crear/actualizar el Secret de la BD en el cluster ---
-      - name: Crear o actualizar el Secret de credenciales de BD
+      - name: Crear o actualizar Secret de BD en el cluster
         run: |
           kubectl create secret generic db-credentials \
-            --from-literal=DB_ENDPOINT="${{ env.DB_ENDPOINT }}" \
-            --from-literal=DB_PORT="${{ env.DB_PORT }}" \
-            --from-literal=DB_NAME="${{ env.DB_NAME }}" \
-            --from-literal=DB_USERNAME="${{ env.DB_USERNAME }}" \
-            --from-literal=DB_PASSWORD="${{ env.DB_PASSWORD }}" \
+            --from-literal=DB_ENDPOINT="${{ secrets.DB_ENDPOINT }}" \
+            --from-literal=DB_PORT="${{ secrets.DB_PORT }}" \
+            --from-literal=DB_NAME="${{ secrets.DB_NAME }}" \
+            --from-literal=DB_USERNAME="${{ secrets.DB_USERNAME }}" \
+            --from-literal=DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      # --- Aplicar los manifiestos de Kubernetes ---
       - name: Deploy a EKS
         run: kubectl apply -f k8s/
 
-      # --- Forzar que el Deployment tome la nueva imagen (importante con el tag "latest") ---
-      - name: Reiniciar el Deployment para tomar la nueva imagen
+      - name: Reiniciar Deployment para tomar nueva imagen
         run: kubectl rollout restart deployment/back-ventas
 
-      - name: Esperar a que el rollout termine
+      - name: Esperar rollout
         run: kubectl rollout status deployment/back-ventas --timeout=120s
