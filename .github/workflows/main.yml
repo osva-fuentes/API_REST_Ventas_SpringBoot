@@ -70,4 +70,4 @@ jobs:
         run: kubectl rollout restart deployment/back-ventas
 
       - name: Esperar rollout
-        run: kubectl rollout status deployment/back-ventas --timeout=120s
+        run: kubectl rollout status deployment/back-ventas --timeout=300s
