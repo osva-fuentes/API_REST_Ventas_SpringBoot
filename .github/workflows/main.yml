@@ -66,8 +66,4 @@ jobs:
       - name: Deploy a EKS
         run: kubectl apply -f k8s/
 
-      - name: Reiniciar Deployment para tomar nueva imagen
-        run: kubectl rollout restart deployment/back-ventas
 
-      - name: Esperar rollout
-        run: kubectl rollout status deployment/back-ventas --timeout=300s
