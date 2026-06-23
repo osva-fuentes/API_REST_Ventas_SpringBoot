@@ -13,6 +13,11 @@ spec:
     metadata:
       labels:
         app: back-despachos
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "false"
+        instrumentation.opentelemetry.io/inject-nodejs: "false"
+        instrumentation.opentelemetry.io/inject-python: "false"
+        instrumentation.opentelemetry.io/inject-dotnet: "false"
     spec:
       containers:
         - name: back-despachos
@@ -33,13 +38,13 @@ spec:
             httpGet:
               path: /swagger-ui.html
               port: 8081
-            initialDelaySeconds: 30
+            initialDelaySeconds: 60
             periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /swagger-ui.html
               port: 8081
-            initialDelaySeconds: 45
+            initialDelaySeconds: 90
             periodSeconds: 15
 ---
 apiVersion: v1
