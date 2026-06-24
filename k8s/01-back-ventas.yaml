@@ -13,11 +13,6 @@ spec:
     metadata:
       labels:
         app: back-ventas
-      annotations:
-        instrumentation.opentelemetry.io/inject-java: "false"
-        instrumentation.opentelemetry.io/inject-nodejs: "false"
-        instrumentation.opentelemetry.io/inject-python: "false"
-        instrumentation.opentelemetry.io/inject-dotnet: "false"
     spec:
       containers:
         - name: back-ventas
@@ -27,25 +22,6 @@ spec:
           envFrom:
             - secretRef:
                 name: db-credentials
-          resources:
-            requests:
-              cpu: "100m"
-              memory: "256Mi"
-            limits:
-              cpu: "500m"
-              memory: "512Mi"
-          readinessProbe:
-            httpGet:
-              path: /swagger-ui.html
-              port: 8080
-            initialDelaySeconds: 60
-            periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              path: /swagger-ui.html
-              port: 8080
-            initialDelaySeconds: 90
-            periodSeconds: 15
 ---
 apiVersion: v1
 kind: Service
@@ -54,7 +30,8 @@ metadata:
 spec:
   selector:
     app: back-ventas
+  type: NodePort
   ports:
     - port: 8080
       targetPort: 8080
-  type: LoadBalancer      
+      nodePort: 30081
